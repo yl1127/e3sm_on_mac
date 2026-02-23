@@ -130,9 +130,16 @@ detect_system() {
     USER_NAME=$(git config user.name 2>/dev/null || echo "Your Name")
     USER_EMAIL=$(git config user.email 2>/dev/null || echo "your.email@example.com")
     
+    # Check if MOAB is installed
+    MOAB_INSTALLED="false"
+    if [ -f "$INSTALL_PREFIX/lib/libMOAB.a" ] || [ -f "$INSTALL_PREFIX/lib/libMOAB.dylib" ]; then
+        MOAB_INSTALLED="true"
+    fi
+
     print_info "Machine name:          $MACHINE_NAME"
     print_info "CPU cores:             $MAX_CORES"
     print_info "macOS SDK:             $SDKROOT"
+    print_info "MOAB installed:        $MOAB_INSTALLED"
     print_info "Supported by:          $USER_NAME ($USER_EMAIL)"
 }
 
@@ -183,6 +190,8 @@ generate_config_machines() {
     <module_system type="none"/>
     <environment_variables>
       <env name="OMP_STACKSIZE">256M</env>
+      <env name="NETCDF_PATH">$INSTALL_PREFIX</env>
+$(if [ "$MOAB_INSTALLED" = "true" ]; then echo "      <env name=\"MOAB_ROOT\">$INSTALL_PREFIX</env>"; fi)
     </environment_variables>
   </machine>
 </config_machines>
