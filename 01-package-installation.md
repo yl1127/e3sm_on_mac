@@ -8,6 +8,18 @@ This guide covers installing all required libraries for compiling E3SM on macOS 
 - Homebrew package manager
 - At least 10GB of free disk space
 
+### Required Homebrew Packages
+
+Install these before running the installation script:
+
+```bash
+# Compiler
+brew install gcc@11
+
+# Required for building MOAB
+brew install cmake autoconf automake libtool
+```
+
 ## Quick Start: Automated Installation Script
 
 For convenience, use the automated installation script [`scripts/install_e3sm_libs.sh`](scripts/install_e3sm_libs.sh) that handles all packages in one go or step-by-step.
@@ -255,7 +267,157 @@ export NETCDF_FORTRAN_PATH=$INSTALL_PREFIX
 
 **Add these to your shell profile** so they're always available.
 
-## Manual Step 8: Final Verification
+## Manual Step 8 (Optional): Install MOAB and Dependencies
+
+[MOAB](https://sigma.mcs.anl.gov/moab-library/) (Mesh-Oriented datABase) is required for E3SM configurations that use unstructured meshes with online remapping (e.g., TempestRemap). If you do not need MOAB, you can skip this step.
+
+MOAB requires several additional libraries: **Eigen3**, **GKlib**, **METIS**, and **ParMETIS**. It also downloads **TempestRemap** and **Zoltan** during its own build.
+
+### Prerequisites
+
+Install the following via Homebrew (if not already installed):
+
+```bash
+brew install cmake autoconf automake libtool
+```
+
+### Step 8a: Install Eigen3 (header-only)
+
+```bash
+cd ~/packages
+curl -LO https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz
+tar -xzf eigen-3.4.0.tar.gz
+cd eigen-3.4.0
+
+mkdir -p build && cd build
+cmake .. \
+    -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX \
+    -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+    -DBUILD_TESTING=OFF
+make install
+cd ../..
+```
+
+### Step 8b: Install GKlib
+
+GKlib must be compiled with `clang` on ARM macOS because GCC 11's `include-fixed/stdio.h` is broken on this platform.
+
+```bash
+cd ~/packages
+git clone https://github.com/KarypisLab/GKlib.git
+cd GKlib
+
+mkdir -p build && cd build
+cmake .. \
+    -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX \
+    -DCMAKE_C_COMPILER=clang \
+    -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DGKLIB_BUILD_APPS=OFF \
+    -DNO_X86=ON
+make -j$(sysctl -n hw.ncpu)
+make install
+cd ../..
+```
+
+> **Note:** `-DGKLIB_BUILD_APPS=OFF` avoids building test apps that use x86 assembly, and `-DNO_X86=ON` disables x86-specific code paths.
+
+### Step 8c: Install METIS v5.2.1
+
+```bash
+cd ~/packages
+git clone https://github.com/KarypisLab/METIS.git
+cd METIS
+git checkout v5.2.1
+
+# Symlink GKlib source (METIS expects it as a subdirectory)
+ln -sf ../GKlib GKlib
+
+# Generate metis.h with correct type widths
+mkdir -p build/xinclude
+echo "#define IDXTYPEWIDTH 32" > build/xinclude/metis.h
+echo "#define REALTYPEWIDTH 32" >> build/xinclude/metis.h
+cat include/metis.h >> build/xinclude/metis.h
+cp include/CMakeLists.txt build/xinclude/
+
+cd build
+cmake .. \
+    -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX \
+    -DCMAKE_C_COMPILER=clang \
+    -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+    -DGKLIB_PATH="$HOME/packages/GKlib" \
+    -DCMAKE_VERBOSE_MAKEFILE=1
+make -j$(sysctl -n hw.ncpu)
+make install
+cd ../..
+```
+
+### Step 8d: Install ParMETIS
+
+```bash
+cd ~/packages
+git clone https://github.com/KarypisLab/ParMETIS.git
+cd ParMETIS
+git checkout main
+
+mkdir -p build && cd build
+cmake .. \
+    -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX \
+    -DCMAKE_C_COMPILER=$INSTALL_PREFIX/bin/mpicc \
+    -DCMAKE_CXX_COMPILER=$INSTALL_PREFIX/bin/mpicxx \
+    -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+    -DGKLIB_PATH="$INSTALL_PREFIX" \
+    -DMETIS_PATH="$INSTALL_PREFIX" \
+    -DCMAKE_VERBOSE_MAKEFILE=1
+make -j$(sysctl -n hw.ncpu)
+make install
+cd ../..
+```
+
+> **Note:** `GKLIB_PATH` and `METIS_PATH` point to `$INSTALL_PREFIX` (where the installed headers with proper type defines are located), not to the source directories.
+
+### Step 8e: Install MOAB
+
+```bash
+cd ~/packages
+git clone https://bitbucket.org/fathomteam/moab.git
+cd moab
+git checkout master
+
+autoreconf -fi
+
+mkdir -p build && cd build
+../configure \
+    CC=$INSTALL_PREFIX/bin/mpicc \
+    CXX=$INSTALL_PREFIX/bin/mpicxx \
+    FC=$INSTALL_PREFIX/bin/mpif90 \
+    F77=$INSTALL_PREFIX/bin/mpif77 \
+    LIBS="-lGKlib" \
+    --prefix=$INSTALL_PREFIX \
+    --enable-debug --enable-optimize \
+    --with-mpi=$INSTALL_PREFIX \
+    --with-hdf5=$INSTALL_PREFIX \
+    --with-netcdf=$INSTALL_PREFIX \
+    --with-pnetcdf=$INSTALL_PREFIX \
+    --with-metis=$INSTALL_PREFIX \
+    --with-parmetis=$INSTALL_PREFIX \
+    --with-eigen3=$INSTALL_PREFIX/include/eigen3 \
+    --download-tempestremap \
+    --download-zoltan
+
+make -j$(sysctl -n hw.ncpu)
+make install
+cd ../..
+```
+
+> **Note:** `LIBS="-lGKlib"` is required because `libmetis.a` depends on GKlib symbols. The `--with-eigen3` path points to `$INSTALL_PREFIX/include/eigen3` (where the `Eigen/` directory resides). TempestRemap and Zoltan are downloaded and built automatically by MOAB's configure.
+
+Verify MOAB:
+```bash
+ls $INSTALL_PREFIX/lib/libMOAB.a
+```
+
+## Manual Step 9: Final Verification
 
 Run these commands to verify all installations:
 
@@ -285,7 +447,7 @@ echo "PATH: $PATH"
 echo "NETCDF_PATH: $NETCDF_PATH"
 ```
 
-## Manual Step 9: Complete Shell Profile Configuration
+## Manual Step 10: Complete Shell Profile Configuration
 
 Add all these lines to your `~/.zshrc` (or `~/.bash_profile` for bash):
 
