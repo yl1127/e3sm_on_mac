@@ -87,6 +87,9 @@ Create `~/.cime/config_machines.xml`:
     <module_system type="none"/>
     <environment_variables>
       <env name="OMP_STACKSIZE">256M</env>
+      <env name="NETCDF_PATH">$ENV{HOME}/local/gcc11</env>
+      <!-- Include MOAB_ROOT only if MOAB was installed -->
+      <env name="MOAB_ROOT">$ENV{HOME}/local/gcc11</env>
     </environment_variables>
   </machine>
 </config_machines.xml>
@@ -102,6 +105,8 @@ Create `~/.cime/config_machines.xml`:
 - `SUPPORTED_BY`: Your contact information
 - `MAX_TASKS_PER_NODE`: Number of CPU cores (find with `sysctl -n hw.ncpu`)
 - `GMAKE_J`: Parallel build jobs (typically same as core count)
+- `NETCDF_PATH`: Path to your NetCDF installation (must match your `$INSTALL_PREFIX`)
+- `MOAB_ROOT`: Path to your MOAB installation — **only include this if you installed MOAB** (see `01-package-installation.md`)
 
 ## Step 2: Create Compiler Definition
 

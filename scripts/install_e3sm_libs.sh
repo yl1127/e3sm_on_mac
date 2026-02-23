@@ -18,6 +18,13 @@ PNETCDF_VERSION=1.12.3
 HDF5_VERSION=1.14.5
 NETCDF_C_VERSION=4.9.3
 NETCDF_F_VERSION=4.6.2
+EIGEN3_VERSION=3.4.0
+GKLIB_REPO="https://github.com/KarypisLab/GKlib.git"
+METIS_REPO="https://github.com/KarypisLab/METIS.git"
+METIS_TAG=v5.2.1
+PARMETIS_REPO="https://github.com/KarypisLab/ParMETIS.git"
+PARMETIS_BRANCH=main
+MOAB_BRANCH=master
 
 NCORES=$(sysctl -n hw.ncpu)
 PACKAGES_DIR=${PACKAGES_DIR:-$HOME/packages}
@@ -29,6 +36,8 @@ PNETCDF_URL="https://parallel-netcdf.github.io/Release/pnetcdf-${PNETCDF_VERSION
 HDF5_URL="https://github.com/HDFGroup/hdf5/archive/refs/tags/hdf5_${HDF5_VERSION}.tar.gz"
 NETCDF_C_URL="https://github.com/Unidata/netcdf-c/archive/refs/tags/v${NETCDF_C_VERSION}.tar.gz"
 NETCDF_F_URL="https://github.com/Unidata/netcdf-fortran/archive/refs/tags/v${NETCDF_F_VERSION}.tar.gz"
+EIGEN3_URL="https://gitlab.com/libeigen/eigen/-/archive/${EIGEN3_VERSION}/eigen-${EIGEN3_VERSION}.tar.gz"
+MOAB_URL="https://bitbucket.org/fathomteam/moab.git"
 
 print_status() {
     echo -e "${GREEN}==>${NC} $1"
@@ -55,6 +64,11 @@ Libraries installed:
   - HDF5 ${HDF5_VERSION} (data format with parallel I/O)
   - NetCDF-C ${NETCDF_C_VERSION} (climate data format with parallel support)
   - NetCDF-Fortran ${NETCDF_F_VERSION} (Fortran interface to NetCDF)
+  - Eigen3 ${EIGEN3_VERSION} (header-only linear algebra library)
+  - GKlib (graph kernel library, required by METIS/ParMETIS)
+  - METIS ${METIS_TAG} (graph partitioning)
+  - ParMETIS (parallel graph partitioning)
+  - MOAB (Mesh-Oriented datABase with TempestRemap and Zoltan)
 
 Usage:
   $0 [OPTIONS] [COMMAND]
@@ -73,6 +87,11 @@ Commands:
   hdf5             Install HDF5 only
   netcdf-c         Install NetCDF-C only
   netcdf-fortran   Install NetCDF-Fortran only
+  eigen3           Install Eigen3 only
+  gklib            Install GKlib only
+  metis            Install METIS (and GKlib)
+  parmetis         Install ParMETIS (and GKlib, METIS)
+  moab             Install MOAB (and Eigen3, GKlib, METIS, ParMETIS)
   verify           Verify installation
   check            Check prerequisites
 
@@ -123,6 +142,24 @@ check_prerequisites() {
         print_error "macOS SDK not found at $SDKROOT"
         print_error "Install Xcode Command Line Tools: xcode-select --install"
         exit 1
+    fi
+    
+    # Check for cmake (needed for Eigen3, METIS, ParMETIS)
+    if ! command -v cmake &> /dev/null; then
+        print_warning "cmake not found. Installing via Homebrew..."
+        brew install cmake
+    fi
+    
+    # Check for autotools (needed for MOAB)
+    if ! command -v autoreconf &> /dev/null; then
+        print_warning "autotools not found. Installing via Homebrew..."
+        brew install autoconf automake libtool
+    fi
+    
+    # Check for git (needed for MOAB)
+    if ! command -v git &> /dev/null; then
+        print_warning "git not found. Installing via Homebrew..."
+        brew install git
     fi
     
     # Check disk space (need at least 10GB)
@@ -346,6 +383,196 @@ install_netcdf_fortran() {
     print_status "NetCDF-Fortran installed successfully"
 }
 
+install_eigen3() {
+    print_status "Installing Eigen3 ${EIGEN3_VERSION}..."
+    
+    if [ -d "$INSTALL_PREFIX/include/eigen3/Eigen" ]; then
+        print_warning "Eigen3 already installed, skipping"
+        return 0
+    fi
+    
+    cd "$PACKAGES_DIR"
+    if [ ! -f "eigen-${EIGEN3_VERSION}.tar.gz" ]; then
+        curl -LO "$EIGEN3_URL"
+    fi
+    
+    tar -xzf eigen-${EIGEN3_VERSION}.tar.gz
+    cd eigen-${EIGEN3_VERSION}
+    
+    rm -rf build && mkdir -p build && cd build
+    cmake .. \
+        -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX \
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+        -DBUILD_TESTING=OFF
+    make install
+    cd ../..
+    
+    print_status "Eigen3 installed successfully"
+}
+
+install_gklib() {
+    print_status "Installing GKlib..."
+    
+    if [ -f "$INSTALL_PREFIX/lib/libGKlib.a" ]; then
+        print_warning "GKlib already installed, skipping"
+        return 0
+    fi
+    
+    cd "$PACKAGES_DIR"
+    if [ ! -d "GKlib" ]; then
+        git clone "$GKLIB_REPO"
+    fi
+    cd GKlib
+    
+    rm -rf build && mkdir -p build && cd build
+    cmake .. \
+        -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX \
+        -DCMAKE_C_COMPILER=clang \
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+        -DBUILD_SHARED_LIBS=OFF \
+        -DGKLIB_BUILD_APPS=OFF \
+        -DNO_X86=ON
+    make -j${NCORES}
+    make install
+    cd ../..
+    
+    print_status "GKlib installed successfully"
+}
+
+install_metis() {
+    print_status "Installing METIS ${METIS_TAG}..."
+    
+    if [ -f "$INSTALL_PREFIX/lib/libmetis.a" ] || [ -f "$INSTALL_PREFIX/lib/libmetis.dylib" ]; then
+        print_warning "METIS already installed, skipping"
+        return 0
+    fi
+    
+    cd "$PACKAGES_DIR"
+    if [ ! -d "METIS" ]; then
+        git clone "$METIS_REPO"
+    fi
+    cd METIS
+    git checkout ${METIS_TAG}
+    
+    # Ensure GKlib submodule is available
+    if [ ! -f "GKlib/GKlibSystem.cmake" ]; then
+        if [ -d "$PACKAGES_DIR/GKlib" ]; then
+            rm -rf GKlib
+            ln -s "$PACKAGES_DIR/GKlib" GKlib
+        else
+            git submodule update --init
+        fi
+    fi
+    
+    # Use cmake directly instead of the Makefile wrapper
+    # (the Makefile mishandles gklib_path with ~ and abspath)
+    rm -rf build && mkdir -p build
+    
+    # Generate metis.h with correct type widths
+    mkdir -p build/xinclude
+    echo "#define IDXTYPEWIDTH 32" > build/xinclude/metis.h
+    echo "#define REALTYPEWIDTH 32" >> build/xinclude/metis.h
+    cat include/metis.h >> build/xinclude/metis.h
+    cp include/CMakeLists.txt build/xinclude/
+    
+    cd build
+    cmake .. \
+        -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX \
+        -DCMAKE_C_COMPILER=clang \
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+        -DGKLIB_PATH="$PACKAGES_DIR/GKlib" \
+        -DCMAKE_VERBOSE_MAKEFILE=1
+    make -j${NCORES}
+    make install
+    cd ../..
+    
+    print_status "METIS installed successfully"
+}
+
+install_parmetis() {
+    print_status "Installing ParMETIS (branch: ${PARMETIS_BRANCH})..."
+    
+    if [ -f "$INSTALL_PREFIX/lib/libparmetis.a" ] || [ -f "$INSTALL_PREFIX/lib/libparmetis.dylib" ]; then
+        print_warning "ParMETIS already installed, skipping"
+        return 0
+    fi
+    
+    cd "$PACKAGES_DIR"
+    if [ ! -d "ParMETIS" ]; then
+        git clone "$PARMETIS_REPO"
+    fi
+    cd ParMETIS
+    git checkout ${PARMETIS_BRANCH}
+    
+    # Use cmake directly (the Makefile has the same ~/local abspath bug as METIS)
+    # Point GKLIB_PATH and METIS_PATH to the install prefix where headers/libs are installed
+    rm -rf build && mkdir -p build && cd build
+    cmake .. \
+        -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX \
+        -DCMAKE_C_COMPILER=$INSTALL_PREFIX/bin/mpicc \
+        -DCMAKE_CXX_COMPILER=$INSTALL_PREFIX/bin/mpicxx \
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+        -DGKLIB_PATH="$INSTALL_PREFIX" \
+        -DMETIS_PATH="$INSTALL_PREFIX" \
+        -DCMAKE_VERBOSE_MAKEFILE=1
+    make -j${NCORES}
+    make install
+    cd ../..
+    
+    print_status "ParMETIS installed successfully"
+}
+
+install_moab() {
+    print_status "Installing MOAB (branch: ${MOAB_BRANCH})..."
+    
+    if [ -f "$INSTALL_PREFIX/lib/libMOAB.a" ] || [ -f "$INSTALL_PREFIX/lib/libMOAB.dylib" ]; then
+        print_warning "MOAB already installed, skipping"
+        return 0
+    fi
+    
+    cd "$PACKAGES_DIR"
+    if [ ! -d "moab" ]; then
+        git clone "$MOAB_URL"
+    fi
+    cd moab
+    git checkout ${MOAB_BRANCH}
+    git pull origin ${MOAB_BRANCH} 2>/dev/null || true
+    
+    # Ensure autoreconf is available (needed to generate configure script)
+    if ! command -v autoreconf &> /dev/null; then
+        print_status "Installing autotools (required for MOAB)..."
+        brew install autoconf automake libtool
+    fi
+    
+    autoreconf -fi
+    
+    mkdir -p build && cd build
+    
+    ../configure \
+        CC=$INSTALL_PREFIX/bin/mpicc \
+        CXX=$INSTALL_PREFIX/bin/mpicxx \
+        FC=$INSTALL_PREFIX/bin/mpif90 \
+        F77=$INSTALL_PREFIX/bin/mpif77 \
+        LIBS="-lGKlib" \
+        --prefix=$INSTALL_PREFIX \
+        --enable-debug --enable-optimize \
+        --with-mpi=$INSTALL_PREFIX \
+        --with-hdf5=$INSTALL_PREFIX \
+        --with-netcdf=$INSTALL_PREFIX \
+        --with-pnetcdf=$INSTALL_PREFIX \
+        --with-metis=$INSTALL_PREFIX \
+        --with-parmetis=$INSTALL_PREFIX \
+        --with-eigen3=$INSTALL_PREFIX/include/eigen3 \
+        --download-tempestremap \
+        --download-zoltan
+    
+    make -j${NCORES}
+    make install
+    cd ../..
+    
+    print_status "MOAB installed successfully"
+}
+
 verify_installation() {
     print_status "Verifying installation..."
     
@@ -392,6 +619,46 @@ verify_installation() {
         all_ok=false
     fi
     
+    # Check Eigen3
+    if [ -d "$INSTALL_PREFIX/include/eigen3/Eigen" ]; then
+        echo -e "${GREEN}✓${NC} Eigen3: ${EIGEN3_VERSION}"
+    else
+        echo -e "${RED}✗${NC} Eigen3: NOT FOUND"
+        all_ok=false
+    fi
+    
+    # Check GKlib
+    if [ -f "$INSTALL_PREFIX/lib/libGKlib.a" ]; then
+        echo -e "${GREEN}✓${NC} GKlib: installed"
+    else
+        echo -e "${RED}✗${NC} GKlib: NOT FOUND"
+        all_ok=false
+    fi
+    
+    # Check METIS
+    if [ -f "$INSTALL_PREFIX/lib/libmetis.a" ] || [ -f "$INSTALL_PREFIX/lib/libmetis.dylib" ]; then
+        echo -e "${GREEN}✓${NC} METIS: ${METIS_TAG}"
+    else
+        echo -e "${RED}✗${NC} METIS: NOT FOUND"
+        all_ok=false
+    fi
+    
+    # Check ParMETIS
+    if [ -f "$INSTALL_PREFIX/lib/libparmetis.a" ] || [ -f "$INSTALL_PREFIX/lib/libparmetis.dylib" ]; then
+        echo -e "${GREEN}✓${NC} ParMETIS: installed (branch: ${PARMETIS_BRANCH})"
+    else
+        echo -e "${RED}✗${NC} ParMETIS: NOT FOUND"
+        all_ok=false
+    fi
+    
+    # Check MOAB
+    if [ -f "$INSTALL_PREFIX/lib/libMOAB.a" ] || [ -f "$INSTALL_PREFIX/lib/libMOAB.dylib" ]; then
+        echo -e "${GREEN}✓${NC} MOAB: installed (branch: ${MOAB_BRANCH})"
+    else
+        echo -e "${RED}✗${NC} MOAB: NOT FOUND"
+        all_ok=false
+    fi
+    
     if [ "$all_ok" = true ]; then
         print_status "All packages installed successfully!"
         echo ""
@@ -406,6 +673,7 @@ verify_installation() {
         echo "export NETCDF_PATH=\$INSTALL_PREFIX"
         echo "export NETCDF_C_PATH=\$INSTALL_PREFIX"
         echo "export NETCDF_FORTRAN_PATH=\$INSTALL_PREFIX"
+        echo "export MOAB_PATH=\$INSTALL_PREFIX"
     else
         print_error "Some packages failed to install"
         exit 1
@@ -426,8 +694,13 @@ show_menu() {
     echo "5) Install HDF5 only"
     echo "6) Install NetCDF-C only"
     echo "7) Install NetCDF-Fortran only"
-    echo "8) Verify installation"
-    echo "9) Check prerequisites"
+    echo "8) Install Eigen3 only"
+    echo "9) Install GKlib only"
+    echo "10) Install METIS only"
+    echo "11) Install ParMETIS only"
+    echo "12) Install MOAB (with deps)"
+    echo "13) Verify installation"
+    echo "14) Check prerequisites"
     echo "0) Exit"
     echo ""
     read -p "Choose an option: " choice
@@ -450,7 +723,7 @@ main() {
                 export INSTALL_PREFIX="$2"
                 shift 2
                 ;;
-            all|libevent|openmpi|pnetcdf|hdf5|netcdf-c|netcdf-fortran|verify|check)
+            all|libevent|openmpi|pnetcdf|hdf5|netcdf-c|netcdf-fortran|eigen3|gklib|metis|parmetis|moab|verify|check)
                 command="$1"
                 shift
                 ;;
@@ -479,6 +752,11 @@ main() {
                     install_hdf5
                     install_netcdf_c
                     install_netcdf_fortran
+                    install_eigen3
+                    install_gklib
+                    install_metis
+                    install_parmetis
+                    install_moab
                     verify_installation
                     break
                     ;;
@@ -488,8 +766,13 @@ main() {
                 5) install_hdf5 ;;
                 6) install_netcdf_c ;;
                 7) install_netcdf_fortran ;;
-                8) verify_installation ;;
-                9) check_prerequisites ;;
+                8) install_eigen3 ;;
+                9) install_gklib ;;
+                10) install_gklib && install_metis ;;
+                11) install_gklib && install_metis && install_parmetis ;;
+                12) install_eigen3 && install_gklib && install_metis && install_parmetis && install_moab ;;
+                13) verify_installation ;;
+                14) check_prerequisites ;;
                 0) exit 0 ;;
                 *) print_error "Invalid option" ;;
             esac
@@ -505,6 +788,11 @@ main() {
                 install_hdf5
                 install_netcdf_c
                 install_netcdf_fortran
+                install_eigen3
+                install_gklib
+                install_metis
+                install_parmetis
+                install_moab
                 verify_installation
                 ;;
             libevent) install_libevent ;;
@@ -513,6 +801,11 @@ main() {
             hdf5) install_hdf5 ;;
             netcdf-c) install_netcdf_c ;;
             netcdf-fortran) install_netcdf_fortran ;;
+            eigen3) install_eigen3 ;;
+            gklib) install_gklib ;;
+            metis) install_gklib && install_metis ;;
+            parmetis) install_gklib && install_metis && install_parmetis ;;
+            moab) install_eigen3 && install_gklib && install_metis && install_parmetis && install_moab ;;
             verify) verify_installation ;;
             check) check_prerequisites ;;
         esac
