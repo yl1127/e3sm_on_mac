@@ -200,8 +200,7 @@ create_case() {
         --res "$RESOLUTION" \
         --mach "$MACHINE" \
         --compiler "$COMPILER" \
-        --compset "$COMPSET" \
-        --run-unsupported
+        --compset "$COMPSET"
     
     if [ $? -ne 0 ]; then
         print_error "Case creation failed"
