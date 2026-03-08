@@ -1,0 +1,24 @@
+# Temporary installation notes
+package_installation_notes.txt
+
+# macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Build artifacts (if users copy scripts into E3SM)
+*.o
+*.mod
+*.a
+*.so
+
+# User-specific test cases
+test_cases/
+my_cases/

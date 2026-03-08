@@ -100,8 +100,12 @@ Install all required libraries from source.
 - HDF5 1.14.5 (data format)
 - NetCDF-C 4.9.3 (climate data format)
 - NetCDF-Fortran 4.6.2
+- PNetCDF 1.12.3 (parallel NetCDF, classic format)
+- *(Optional)* MOAB (mesh-oriented database for unstructured meshes)
+  - Eigen3, GKlib, METIS, ParMETIS (MOAB dependencies)
+  - TempestRemap, Zoltan (downloaded automatically by MOAB build)
 
-**Time:** 30-60 minutes
+**Time:** 30-60 minutes (longer if building MOAB)
 
 **Start here:** [01-package-installation.md](01-package-installation.md)
 

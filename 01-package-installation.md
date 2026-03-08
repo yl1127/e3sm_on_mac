@@ -53,6 +53,8 @@ For convenience, use the automated installation script [`scripts/install_e3sm_li
 /path/to/mac-notes/scripts/install_e3sm_libs.sh hdf5
 /path/to/mac-notes/scripts/install_e3sm_libs.sh netcdf-c
 /path/to/mac-notes/scripts/install_e3sm_libs.sh netcdf-fortran
+/path/to/mac-notes/scripts/install_e3sm_libs.sh pnetcdf
+/path/to/mac-notes/scripts/install_e3sm_libs.sh moab      # includes Eigen3, GKlib, METIS, ParMETIS
 
 # Verify installation
 /path/to/mac-notes/scripts/install_e3sm_libs.sh verify
