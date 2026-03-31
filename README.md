@@ -58,9 +58,12 @@ xcode-select -p
 
 # Check Homebrew
 brew --version
+# Should output: Homebrew 5.1.2
 
 # If missing, install:
+
 xcode-select --install
+# https://brew.sh/
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 ```
 
